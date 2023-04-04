@@ -8,9 +8,10 @@
 #define MAX_ARP_ENTRIES 10
 #define MIN_PACKET_LEN 64
 #define ETHENER_TYPE_IP 0x0800
-#define ETHENER_TYPE_ARP 0x0806
+#define ETHENER_TYPE_ETH 0x0806
 #define ARP_OP_REQUEST 1
 #define ARP_HTYPE_ETHER 1
+#define ARP_OP_REPLY 2
 
 /* Routing table */
 struct route_table_entry *rtable;
@@ -30,22 +31,24 @@ struct arp_header *arp_table;
 struct ether_header *eth_header;
 
 
-void bubble_sort(struct route_table_entry *rtable, int rtable_len) {
-	for (int i = 0; i < rtable_len; i++) {
-    for (int j = i + 1; j < rtable_len; j++) {
-        if (rtable[i].mask > rtable[j].mask) {
-            struct route_table_entry temp = rtable[i];
-            rtable[i] = rtable[j];
-            rtable[j] = temp;
-        }
-    }
-}
-}
+int compare_entries(const void *f1, const void *f2)
+{
+	struct route_table_entry *first = (struct route_table_entry *)f1;
+	struct route_table_entry *second = (struct route_table_entry *)f2;
 
+	int diff = ntohl(first->prefix & first->mask) - ntohl(second->prefix & second->mask);
+
+	if (diff != 0)
+		return (diff > 0 ? 1 : -1);
+
+	return ntohl(first->mask) - ntohl(second->mask);
+}
 
 struct route_table_entry *get_best_route(uint32_t ip_dest) {
 	struct route_table_entry *best_route = NULL;
 	uint32_t best_mask = 0;
+
+	qsort(rtable, rtable_len, sizeof(struct route_table_entry), compare_entries);
 
 	for (int i = 0; i < rtable_len; i++) {
 		if ((rtable[i].mask & ip_dest) == (rtable[i].mask & rtable[i].prefix)) {
@@ -57,17 +60,11 @@ struct route_table_entry *get_best_route(uint32_t ip_dest) {
 	}
 	return best_route;
 
+
     // struct route_table_entry *best_route = NULL;
     // uint32_t best_mask = 0;
     // int left = 0;
     // int right = rtable_len - 1;
-
-	// // FILE *f = fopen("tabela_r1.txt", "w+");
-	// // for (int i = 0; i < rtable_len; i++) {
-	// // 	fprintf(f, "%d \n", rtable[i].prefix);
-	// // }
-
-	// // fclose(f);
 
     // while (left <= right) {
     //     int mid = left + (right - left) / 2;
@@ -102,7 +99,6 @@ struct arp_entry *get_mac_entry(uint32_t given_ip) {
 
 int main(int argc, char *argv[])
 {
-	char buf[MAX_PACKET_LEN];
 
 	// Do not modify this line
 	init(argc - 2, argv + 2);
@@ -115,7 +111,6 @@ int main(int argc, char *argv[])
 	DIE(mac_table == NULL, "memory");
 
 	rtable_len = read_rtable(argv[1], rtable);
-	mac_table_len = parse_arp_table("arp_table.txt", mac_table);
 
 	q = queue_create();
 	DIE(q == NULL, "queue_create");
@@ -125,88 +120,144 @@ int main(int argc, char *argv[])
 
 		int interface;
 		size_t len;
+		char* buf = malloc(MAX_PACKET_LEN);
 
 		interface = recv_from_any_link(buf, &len);
 		DIE(interface < 0, "recv_from_any_links");
 
 		struct ether_header *eth_hdr = (struct ether_header *) buf;
-		/* Note that packets received are in network order,
-		any header field which has more than 1 byte will need to be conerted to
-		host order. For example, ntohs(eth_hdr->ether_type). The oposite is needed when
-		sending a packet on the link, */
+
 		if (ntohs(eth_hdr->ether_type) == ETHENER_TYPE_IP) {
+			printf("\nIP packet\n");
 			struct iphdr *ip_hdr = (struct iphdr *)(buf + sizeof(struct ether_header));
 
-		if (ip_hdr->version != 4) {
-			printf("bad version\n");
-			continue;
-		}
+			if (ip_hdr->version != 4) {
+				printf("bad version\n");
+				continue;
+			}
 
-		if (htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr))) != 0) {
-			printf("Bad checksum\n");
-			continue;
-		}
+			if (checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)) != 0) {
+				printf("Bad checksum\n");
+				continue;
+			}
 
-		if (ip_hdr->daddr == inet_addr(get_interface_ip(interface))) {
-			printf("Packet not for me\n");
-			continue;
-		}
+			if (ip_hdr->daddr == inet_addr(get_interface_ip(interface))) {
+				printf("Packet not for me\n");
+				continue;
+			}
 
-		if (ip_hdr->ttl <= 1) {
-			printf("bad ttl\n");
-			continue;
-		}
+			if (ip_hdr->ttl <= 1) {
+				printf("bad ttl\n");
+				continue;
+			}
 
-		ip_hdr->ttl--;
+			ip_hdr->ttl--;
 
-		struct route_table_entry *best_route = get_best_route(ip_hdr->daddr);
+			struct route_table_entry *best_route = get_best_route(ip_hdr->daddr);
 
-		if (best_route == NULL) {
-			printf("Best route not found\n");
-			continue;
-		}
+			if (best_route == NULL) {
+				printf("Best route not found\n");
+				continue;
+			}
 
-		ip_hdr->check = 0;
-		ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
+			ip_hdr->check = 0;
+			ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
 
-		struct arp_entry *best_mac = get_mac_entry(best_route->next_hop);
-
-		if (best_mac == NULL) {
-			printf("Best mac not found\n");
-			queue_enq(q, buf);
-			struct ether_header *eth_hdr = malloc(sizeof(struct ether_header));
-			DIE(eth_hdr == NULL, "memory");
-
-			eth_hdr->ether_type = htons(ETHENER_TYPE_ARP);
 			get_interface_mac(best_route->interface, eth_hdr->ether_shost);
-			memset(eth_hdr->ether_dhost, 0xFF, sizeof(eth_hdr->ether_dhost));
+			interface = best_route->interface;
 
-			struct arp_header *arp_hdr = malloc(sizeof(struct arp_header));
-			DIE(arp_hdr == NULL, "memory");
+			struct arp_entry *best_mac = get_mac_entry(best_route->next_hop);
+			if (best_mac == NULL) {
+				printf("Best mac not found\n");
+				printf("Enqueue packet - > ");
+				queue_enq(q, buf);
+				queue_enq(q, (void *)len);
+				queue_enq(q, best_route);
+				
+				char *buffer = malloc(MAX_PACKET_LEN);
 
-			arp_hdr->htype = htons(ARP_HTYPE_ETHER);
-			arp_hdr->ptype = htons(ETHENER_TYPE_IP);
-			arp_hdr->hlen = 6;
-			arp_hdr->plen = 4;
-			arp_hdr->op = htons(ARP_OP_REQUEST);
-			get_interface_mac(best_route->interface, arp_hdr->sha);
-			arp_hdr->spa = inet_addr(get_interface_ip(best_route->interface));
-			memset(arp_hdr->tha, 0, sizeof(arp_hdr->tha));
-			arp_hdr->tpa = best_route->next_hop;
+				struct ether_header *eth_header = (struct ether_header *)buffer;
+				eth_header->ether_type = htons(ETHENER_TYPE_ETH);
+				memset(eth_header->ether_dhost, 0xFF, sizeof(eth_header->ether_dhost));
+				get_interface_mac(best_route->interface, eth_header->ether_shost);
 
-			char *buffer = malloc(sizeof(struct ether_header) + sizeof(struct arp_header));
-			memcpy(buffer, eth_hdr, sizeof(struct ether_header));
-			memcpy(buffer + sizeof(struct ether_header), arp_hdr, sizeof(struct arp_header));
+				struct arp_header *arp_hdr = (struct arp_header *)(buffer + sizeof(struct ether_header));
 
-			send_to_link(best_route->interface, buffer, sizeof(struct ether_header) + sizeof(struct arp_header));
+				arp_hdr->op = htons(ARP_OP_REQUEST);
+				arp_hdr->spa = inet_addr(get_interface_ip(best_route->interface));
+				arp_hdr->tpa = best_route->next_hop;
+				arp_hdr->hlen = 6;
+				arp_hdr->plen = 4;
+				arp_hdr->htype = htons(1);
+				arp_hdr->ptype = htons(ETHENER_TYPE_IP);
+				get_interface_mac(best_route->interface, arp_hdr->sha);
+				
+			
+
+				send_to_link(best_route->interface, buffer, sizeof(struct ether_header) + sizeof(struct arp_header));
+				printf("Sent arp request\n");
+				free(buffer);
+				continue;
+			}
+
+			printf("Sending packet\n");
+			get_interface_mac(best_route->interface, eth_hdr->ether_shost);
+			memcpy(&(eth_hdr->ether_dhost), &(get_mac_entry(best_route->next_hop)->mac), sizeof(eth_hdr->ether_dhost));
+			send_to_link(best_route->interface, buf, len);
+			continue;
 		}
 
-		get_interface_mac(best_route->interface, eth_hdr->ether_shost);
+		if (ntohs(eth_hdr->ether_type) == ETHENER_TYPE_ETH) {
+			struct arp_header *arp_hdr = (struct arp_header *)(buf + sizeof(struct ether_header));
+			printf("Got arp packet -->  ");
 
-		memcpy(&(eth_hdr->ether_dhost), &(best_mac->mac), sizeof(eth_hdr->ether_dhost)); 
-		
+			if (ntohs(arp_hdr->op) == ARP_OP_REPLY) {
+				struct arp_entry *mac_entry = get_mac_entry(arp_hdr->spa);
+				printf("Got arp reply   \n");
 
-		send_to_link(best_route->interface, buf, len);
+				if (mac_entry == NULL) {
+					mac_table[mac_table_len].ip = arp_hdr->spa;
+					memcpy(mac_table[mac_table_len].mac, arp_hdr->sha, sizeof(mac_table[mac_table_len].mac));
+					mac_table_len++;
+				
+					while (queue_empty(q) == 0) {
+						printf("Dequeueing\n");
+						char *buffer = queue_deq(q);
+						size_t len = (size_t)queue_deq(q);
+						struct route_table_entry *best_route = queue_deq(q);
+
+						struct arp_entry *best_mac = get_mac_entry(best_route->next_hop);
+
+						if (best_mac == NULL) {
+							printf("Best mac not found\n");
+							continue;
+						}
+
+						struct ether_header *eth_hdr_pair_packet =
+										(struct ether_header *) buffer;
+						memcpy(eth_hdr_pair_packet->ether_dhost, best_mac->mac, sizeof(eth_header->ether_dhost));
+						send_to_link(best_route->interface, buffer, len);
+						printf("Sent queued pacekt\n");
+					}
+				}
+				continue;
+			}
+
+			if (ntohs(arp_hdr->op) == ARP_OP_REQUEST) {
+				printf("Got arp request, sending an arp reply\n");
+				arp_hdr->op = htons(2);
+
+				memcpy(arp_hdr->tha, arp_hdr->sha, sizeof(eth_header->ether_dhost));
+				get_interface_mac(interface, arp_hdr->sha);
+
+				arp_hdr->tpa = arp_hdr->spa;
+				arp_hdr->spa = inet_addr(get_interface_ip(interface));
+
+				memcpy(eth_hdr->ether_dhost, eth_hdr->ether_shost, sizeof(eth_header->ether_dhost));
+				get_interface_mac(interface, eth_hdr->ether_shost);
+
+				send_to_link(interface, buf, len);
+			}
 		}
 	}
 }
