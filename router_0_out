@@ -1,0 +1,227 @@
+Setting up interface: rr-0-1
+Setting up interface: r-0
+Setting up interface: r-1
+Got arp packet -->  Got arp request, sending an arp reply
+
+IP packet
+Best mac not found
+Enqueue packet - > Sent arp request
+Got arp packet -->  Got arp reply   
+Dequeueing
+Sent queued pacekt
+
+IP packet
+Best mac not found
+Enqueue packet - > Sent arp request
+Got arp packet -->  Got arp reply   
+Dequeueing
+Sent queued pacekt
+Got arp packet -->  Got arp request, sending an arp reply
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+Got arp packet -->  Got arp request, sending an arp reply
+
+IP packet
+Bad checksum
+
+IP packet
+Best mac not found
+Enqueue packet - > Sent arp request
+Got arp packet -->  Got arp reply   
+Dequeueing
+Sent queued pacekt
+Got arp packet -->  Got arp reply   
+Got arp packet -->  Got arp request, sending an arp reply
+Got arp packet -->  Got arp reply   
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+Got arp packet -->  Got arp request, sending an arp reply
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+Got arp packet -->  Got arp request, sending an arp reply
+
+IP packet
+ICMP ECHO REQUEST
+
+IP packet
+TTL expired
+Checksum: 38073
+ip_hdr->tot_len: 5184
+icmp_payload: Ş­¾ï
+
+IP packet
+Best route not found
+Checksum: 38073
+ip_hdr->tot_len: 5184
+icmp_payload: Ş­¾ï
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet
+
+IP packet
+Sending packet

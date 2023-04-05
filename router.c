@@ -12,6 +12,13 @@
 #define ARP_OP_REQUEST 1
 #define ARP_HTYPE_ETHER 1
 #define ARP_OP_REPLY 2
+#define IP_PROTOCOL 4
+#define MAC_LEN 6
+#define ICMP_DESTINATION_UNREACHABLE 3
+#define ICMP_TIME_EXCEEDED 11
+#define ICMP_ECHO_REQUEST 8
+#define ICMP_ECHO_REPLY 0
+
 
 /* Routing table */
 struct route_table_entry *rtable;
@@ -31,59 +38,39 @@ struct arp_header *arp_table;
 struct ether_header *eth_header;
 
 
-int compare_entries(const void *f1, const void *f2)
-{
-	struct route_table_entry *first = (struct route_table_entry *)f1;
-	struct route_table_entry *second = (struct route_table_entry *)f2;
+int compare_table(const void *a, const void *b) {
+	struct route_table_entry *el1= (struct route_table_entry *)a;
+	struct route_table_entry *el2 = (struct route_table_entry *)b;
 
-	int diff = ntohl(first->prefix & first->mask) - ntohl(second->prefix & second->mask);
-
-	if (diff != 0)
-		return (diff > 0 ? 1 : -1);
-
-	return ntohl(first->mask) - ntohl(second->mask);
+	if(el1->mask == el2->mask) 
+		return el1->prefix - el2->prefix; 
+	else 
+		return el2->mask - el1->mask;
 }
 
 struct route_table_entry *get_best_route(uint32_t ip_dest) {
 	struct route_table_entry *best_route = NULL;
-	uint32_t best_mask = 0;
+    uint32_t best_mask = 0;
+    int left = 0;
+    int right = rtable_len - 1;
 
-	qsort(rtable, rtable_len, sizeof(struct route_table_entry), compare_entries);
+    while (left <= right) {
+        int mid = left + ((right - left) >> 1) / 2;
 
-	for (int i = 0; i < rtable_len; i++) {
-		if ((rtable[i].mask & ip_dest) == (rtable[i].mask & rtable[i].prefix)) {
-			if (rtable[i].mask > best_mask) {
-				best_mask = rtable[i].mask;
-				best_route = &rtable[i];
-			}
-		}
-	}
-	return best_route;
+        if ((rtable[mid].mask & rtable[mid].prefix) == (ip_dest & rtable[mid].mask)) {
+            if (rtable[mid].mask > best_mask) {
+                best_mask = rtable[mid].mask;
+                best_route = &rtable[mid];
+            }
+	    left = mid + 1;									
+        } else if ((rtable[mid].mask & rtable[mid].prefix) < (ip_dest & rtable[mid].mask)) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
 
-
-    // struct route_table_entry *best_route = NULL;
-    // uint32_t best_mask = 0;
-    // int left = 0;
-    // int right = rtable_len - 1;
-
-    // while (left <= right) {
-    //     int mid = left + (right - left) / 2;
-
-    //     if ((rtable[mid].mask & rtable[mid].prefix) == (ip_dest & rtable[mid].mask)) {
-    //         if (rtable[mid].mask > best_mask) {
-    //             best_mask = rtable[mid].mask;
-    //             best_route = &rtable[mid];
-	// 			printf("best route: %d %d\n", best_route->prefix, best_route->mask);
-    //         }
-	//     left = mid + 1;									
-    //     } else if (rtable[mid].prefix < ip_dest) {
-    //         left = mid + 1;
-    //     } else {
-    //         right = mid - 1;
-    //     }
-    // }
-
-    // return best_route;
+    return best_route;
 }
 
 struct arp_entry *get_mac_entry(uint32_t given_ip) {
@@ -111,6 +98,7 @@ int main(int argc, char *argv[])
 	DIE(mac_table == NULL, "memory");
 
 	rtable_len = read_rtable(argv[1], rtable);
+	qsort(rtable, rtable_len, sizeof(struct route_table_entry), compare_table);
 
 	q = queue_create();
 	DIE(q == NULL, "queue_create");
@@ -130,8 +118,9 @@ int main(int argc, char *argv[])
 		if (ntohs(eth_hdr->ether_type) == ETHENER_TYPE_IP) {
 			printf("\nIP packet\n");
 			struct iphdr *ip_hdr = (struct iphdr *)(buf + sizeof(struct ether_header));
+			void *payload = buf + sizeof(struct ether_header) + sizeof(struct iphdr);
 
-			if (ip_hdr->version != 4) {
+			if (ip_hdr->version != IP_PROTOCOL) {
 				printf("bad version\n");
 				continue;
 			}
@@ -141,13 +130,72 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
-			if (ip_hdr->daddr == inet_addr(get_interface_ip(interface))) {
-				printf("Packet not for me\n");
-				continue;
+			if (ip_hdr->protocol == 1) {
+				struct icmphdr *icmph  = (struct icmphdr *)(buf + sizeof(struct ether_header) + sizeof(struct iphdr));
+
+				if (icmph->type == ICMP_ECHO_REQUEST && icmph->code == 0 && ip_hdr->daddr == inet_addr(get_interface_ip(interface))) {
+					printf("ICMP ECHO REQUEST\n");
+
+					uint32_t temp = ip_hdr->saddr;
+					ip_hdr->saddr = ip_hdr->daddr;
+					ip_hdr->daddr = temp;
+
+					memcpy(eth_hdr->ether_dhost, eth_hdr->ether_shost, MAC_LEN);
+					get_interface_mac(interface, eth_hdr->ether_shost);
+					eth_hdr->ether_type = htons(ETHENER_TYPE_IP);
+
+					icmph->type = ICMP_ECHO_REPLY;
+					icmph->checksum = 0;
+					icmph->checksum = htons(checksum((uint16_t *)icmph, len));
+
+					send_to_link(interface, buf, len);
+
+					continue;
+				}
 			}
 
 			if (ip_hdr->ttl <= 1) {
-				printf("bad ttl\n");
+				printf("TTL expired\n");
+				len += 64;
+
+				memcpy(eth_hdr->ether_dhost, eth_hdr->ether_shost, MAC_LEN);
+				get_interface_mac(interface, eth_hdr->ether_shost);
+
+				ip_hdr->daddr = ip_hdr->saddr;
+				ip_hdr->saddr = inet_addr(get_interface_ip(interface));
+
+				ip_hdr->ttl = 64;
+				ip_hdr->check = 0;
+				ip_hdr->tot_len += 64;
+				ip_hdr->protocol = 1;
+				ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
+				printf("Checksum: %d\n", ip_hdr->check);
+				printf("ip_hdr->tot_len: %d\n", ip_hdr->tot_len);
+
+				struct icmphdr *icmph = (struct icmphdr*)malloc(sizeof(struct icmphdr));
+
+				icmph->type = ICMP_TIME_EXCEEDED;
+				icmph->code = 0;
+				icmph->checksum = 0;
+				icmph->un.echo.id = 0;
+				icmph->un.echo.sequence = 0;
+
+				char *icmp_payload = (char *)malloc(MAX_PACKET_LEN);
+				memcpy(icmp_payload, eth_hdr, sizeof(struct ether_header));
+				memcpy(icmp_payload + sizeof(struct ether_header), ip_hdr, sizeof(struct iphdr));
+				memcpy(icmp_payload + sizeof(struct ether_header) + sizeof(struct iphdr), icmph, sizeof(struct icmphdr));
+				memcpy(icmp_payload + sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct icmphdr), payload, 64);
+
+				printf("icmp_payload: %s\n", icmp_payload);
+
+				icmph->checksum = htons(checksum((uint16_t *)icmph, len));
+
+				memcpy(buf, icmp_payload, len);
+
+				send_to_link(interface, buf, len);
+				free(icmph);
+				free(icmp_payload);
+
 				continue;
 			}
 
@@ -157,9 +205,50 @@ int main(int argc, char *argv[])
 
 			if (best_route == NULL) {
 				printf("Best route not found\n");
+				len += 64;
+
+				memcpy(eth_hdr->ether_dhost, eth_hdr->ether_shost, MAC_LEN);
+				get_interface_mac(interface, eth_hdr->ether_shost);
+
+				ip_hdr->daddr = ip_hdr->saddr;
+				ip_hdr->saddr = inet_addr(get_interface_ip(interface));
+
+				ip_hdr->ttl = 64;
+				ip_hdr->check = 0;
+				ip_hdr->tot_len += 64;
+				ip_hdr->protocol = 1;
+				ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
+				printf("Checksum: %d\n", ip_hdr->check);
+				printf("ip_hdr->tot_len: %d\n", ip_hdr->tot_len);
+
+				struct icmphdr *icmph = (struct icmphdr*)malloc(sizeof(struct icmphdr));
+
+				icmph->type = ICMP_DESTINATION_UNREACHABLE;
+				icmph->code = 0;
+				icmph->checksum = 0;
+				icmph->un.echo.id = 0;
+				icmph->un.echo.sequence = 0;
+
+				char *icmp_payload = (char *)malloc(MAX_PACKET_LEN);
+				memcpy(icmp_payload, eth_hdr, sizeof(struct ether_header));
+				memcpy(icmp_payload + sizeof(struct ether_header), ip_hdr, sizeof(struct iphdr));
+				memcpy(icmp_payload + sizeof(struct ether_header) + sizeof(struct iphdr), icmph, sizeof(struct icmphdr));
+				memcpy(icmp_payload + sizeof(struct ether_header) + sizeof(struct iphdr) + sizeof(struct icmphdr), payload, 64);
+
+				printf("icmp_payload: %s\n", icmp_payload);
+
+				icmph->checksum = htons(checksum((uint16_t *)icmph, len));
+
+				memcpy(buf, icmp_payload, len);
+
+				send_to_link(interface, buf, len);
+				free(icmph);
+				free(icmp_payload);
+
 				continue;
 			}
 
+			
 			ip_hdr->check = 0;
 			ip_hdr->check = htons(checksum((uint16_t *)ip_hdr, sizeof(struct iphdr)));
 
@@ -186,9 +275,9 @@ int main(int argc, char *argv[])
 				arp_hdr->op = htons(ARP_OP_REQUEST);
 				arp_hdr->spa = inet_addr(get_interface_ip(best_route->interface));
 				arp_hdr->tpa = best_route->next_hop;
-				arp_hdr->hlen = 6;
-				arp_hdr->plen = 4;
-				arp_hdr->htype = htons(1);
+				arp_hdr->hlen = MAC_LEN;
+				arp_hdr->plen = IP_PROTOCOL;
+				arp_hdr->htype = htons(ARP_HTYPE_ETHER);
 				arp_hdr->ptype = htons(ETHENER_TYPE_IP);
 				get_interface_mac(best_route->interface, arp_hdr->sha);
 				
@@ -245,7 +334,7 @@ int main(int argc, char *argv[])
 
 			if (ntohs(arp_hdr->op) == ARP_OP_REQUEST) {
 				printf("Got arp request, sending an arp reply\n");
-				arp_hdr->op = htons(2);
+				arp_hdr->op = htons(ARP_OP_REPLY);
 
 				memcpy(arp_hdr->tha, arp_hdr->sha, sizeof(eth_header->ether_dhost));
 				get_interface_mac(interface, arp_hdr->sha);
